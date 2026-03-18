@@ -637,8 +637,8 @@ class SlugRenderer {
             alphaMode: 'premultiplied',
         });
 
-        // Load shader
-        const shaderCode = await (await fetch('shaders.wgsl')).text();
+        // Load shader (cache-bust to avoid stale cached versions)
+        const shaderCode = await (await fetch('shaders.wgsl?v=' + Date.now())).text();
         const shaderModule = this.device.createShaderModule({ code: shaderCode });
 
         // Check for compilation errors
