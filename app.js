@@ -449,6 +449,7 @@ class SlugDataBuilder {
             bandMaxY: numHBands - 1,
             bandTransform: [bandScaleX, bandScaleY, bandOffsetX, bandOffsetY],
             bbox: bboxPadded,
+            bboxTight: { xMin, yMin, xMax, yMax },
             advanceWidth: (glyph.advanceWidth || 0) / unitsPerEm
         };
         this.glyphCache.set(key, meta);
@@ -498,9 +499,18 @@ class SlugDataBuilder {
 // Section 5: Text Layout & Vertex Generation
 // ============================================================
 
-const VERTEX_STRIDE = 64; // bytes per vertex
+// Vertex layout (88 bytes):
+//   position:       float32x2  offset 0
+//   normal:         float32x2  offset 8
+//   texcoord:       float32x2  offset 16
+//   jacobian:       float32x4  offset 24
+//   glyph_xy:       sint32x2   offset 40
+//   band_max_flags: sint32x2   offset 48
+//   band_transform: float32x4  offset 56
+//   color:          float32x4  offset 72
+const VERTEX_STRIDE = 88;
 
-function layoutAndBuildVertices(text, font, slugBuilder) {
+function layoutAndBuildVertices(text, font, slugBuilder, useDilation) {
     const upm = font.unitsPerEm;
     const scale = 1.0 / upm;
     const glyphs = font.stringToGlyphs(text);
@@ -536,9 +546,17 @@ function layoutAndBuildVertices(text, font, slugBuilder) {
     const vView = new DataView(vertexBuf);
     const indexData = new Uint16Array(indexCount);
 
+    // Jacobian: maps object-space displacement to em-space displacement
+    // Since tex = pos * UPM + offset, the Jacobian is simply (UPM, 0, 0, UPM)
+    const jacX = upm;
+    const jacY = 0;
+    const jacZ = 0;
+    const jacW = upm;
+
     for (let qi = 0; qi < quads.length; qi++) {
         const { meta, x } = quads[qi];
-        const bbox = meta.bbox;
+        // Use tight bbox for dilation mode, padded bbox otherwise
+        const bbox = useDilation ? meta.bboxTight : meta.bbox;
         const worldX = x + offsetX;
 
         // Object-space quad corners (world coordinates)
@@ -547,45 +565,54 @@ function layoutAndBuildVertices(text, font, slugBuilder) {
         const x1 = worldX + bbox.xMax * scale;
         const y1 = offsetY + bbox.yMax * scale;
 
-        // Em-space texcoords (raw font units with padding)
+        // Em-space texcoords (raw font units)
         const u0 = bbox.xMin;
         const v0 = bbox.yMin;
         const u1 = bbox.xMax;
         const v1 = bbox.yMax;
 
+        // Corner normals point outward at 45 degrees
         const corners = [
-            { px: x0, py: y0, tu: u0, tv: v0 }, // bottom-left
-            { px: x1, py: y0, tu: u1, tv: v0 }, // bottom-right
-            { px: x1, py: y1, tu: u1, tv: v1 }, // top-right
-            { px: x0, py: y1, tu: u0, tv: v1 }, // top-left
+            { px: x0, py: y0, nx: -1, ny: -1, tu: u0, tv: v0 }, // bottom-left
+            { px: x1, py: y0, nx:  1, ny: -1, tu: u1, tv: v0 }, // bottom-right
+            { px: x1, py: y1, nx:  1, ny:  1, tu: u1, tv: v1 }, // top-right
+            { px: x0, py: y1, nx: -1, ny:  1, tu: u0, tv: v1 }, // top-left
         ];
 
         const baseVertex = qi * 4;
         for (let vi = 0; vi < 4; vi++) {
             const off = (baseVertex + vi) * VERTEX_STRIDE;
             const c = corners[vi];
-            // position (float32x2)
+            // position (float32x2) offset 0
             vView.setFloat32(off + 0, c.px, true);
             vView.setFloat32(off + 4, c.py, true);
-            // texcoord (float32x2)
-            vView.setFloat32(off + 8, c.tu, true);
-            vView.setFloat32(off + 12, c.tv, true);
-            // glyph_xy (sint32x2)
-            vView.setInt32(off + 16, meta.glyphLocX, true);
-            vView.setInt32(off + 20, meta.glyphLocY, true);
-            // band_max_flags (sint32x2)
-            vView.setInt32(off + 24, meta.bandMaxX, true);
-            vView.setInt32(off + 28, meta.bandMaxY, true);
-            // band_transform (float32x4)
-            vView.setFloat32(off + 32, meta.bandTransform[0], true);
-            vView.setFloat32(off + 36, meta.bandTransform[1], true);
-            vView.setFloat32(off + 40, meta.bandTransform[2], true);
-            vView.setFloat32(off + 44, meta.bandTransform[3], true);
-            // color (float32x4) - white by default
-            vView.setFloat32(off + 48, 1.0, true);
-            vView.setFloat32(off + 52, 1.0, true);
-            vView.setFloat32(off + 56, 1.0, true);
-            vView.setFloat32(off + 60, 1.0, true);
+            // normal (float32x2) offset 8
+            vView.setFloat32(off + 8, c.nx, true);
+            vView.setFloat32(off + 12, c.ny, true);
+            // texcoord (float32x2) offset 16
+            vView.setFloat32(off + 16, c.tu, true);
+            vView.setFloat32(off + 20, c.tv, true);
+            // jacobian (float32x4) offset 24
+            vView.setFloat32(off + 24, jacX, true);
+            vView.setFloat32(off + 28, jacY, true);
+            vView.setFloat32(off + 32, jacZ, true);
+            vView.setFloat32(off + 36, jacW, true);
+            // glyph_xy (sint32x2) offset 40
+            vView.setInt32(off + 40, meta.glyphLocX, true);
+            vView.setInt32(off + 44, meta.glyphLocY, true);
+            // band_max_flags (sint32x2) offset 48
+            vView.setInt32(off + 48, meta.bandMaxX, true);
+            vView.setInt32(off + 52, meta.bandMaxY, true);
+            // band_transform (float32x4) offset 56
+            vView.setFloat32(off + 56, meta.bandTransform[0], true);
+            vView.setFloat32(off + 60, meta.bandTransform[1], true);
+            vView.setFloat32(off + 64, meta.bandTransform[2], true);
+            vView.setFloat32(off + 68, meta.bandTransform[3], true);
+            // color (float32x4) offset 72
+            vView.setFloat32(off + 72, 1.0, true);
+            vView.setFloat32(off + 76, 1.0, true);
+            vView.setFloat32(off + 80, 1.0, true);
+            vView.setFloat32(off + 84, 1.0, true);
         }
 
         // Two triangles per quad
@@ -663,16 +690,18 @@ class SlugRenderer {
             bindGroupLayouts: [this.bindGroupLayout]
         });
 
-        // Vertex buffer layout
+        // Vertex buffer layout (88 bytes per vertex)
         const vertexBufferLayout = {
             arrayStride: VERTEX_STRIDE,
             attributes: [
-                { shaderLocation: 0, offset: 0, format: 'float32x2' },   // position
-                { shaderLocation: 1, offset: 8, format: 'float32x2' },   // texcoord
-                { shaderLocation: 2, offset: 16, format: 'sint32x2' },   // glyph_xy
-                { shaderLocation: 3, offset: 24, format: 'sint32x2' },   // band_max_flags
-                { shaderLocation: 4, offset: 32, format: 'float32x4' },  // band_transform
-                { shaderLocation: 5, offset: 48, format: 'float32x4' },  // color
+                { shaderLocation: 0, offset: 0,  format: 'float32x2' },  // position
+                { shaderLocation: 1, offset: 8,  format: 'float32x2' },  // normal
+                { shaderLocation: 2, offset: 16, format: 'float32x2' },  // texcoord
+                { shaderLocation: 3, offset: 24, format: 'float32x4' },  // jacobian
+                { shaderLocation: 4, offset: 40, format: 'sint32x2' },   // glyph_xy
+                { shaderLocation: 5, offset: 48, format: 'sint32x2' },   // band_max_flags
+                { shaderLocation: 6, offset: 56, format: 'float32x4' },  // band_transform
+                { shaderLocation: 7, offset: 72, format: 'float32x4' },  // color
             ]
         };
 
@@ -824,7 +853,7 @@ class SlugRenderer {
         // Upload uniforms
         const uniformData = new Float32Array(20);
         uniformData.set(mvp, 0);
-        uniformData.set([displayW, displayH, 0, 0], 16);
+        uniformData.set([displayW, displayH, this.useDilation ? 1.0 : 0.0, 0], 16);
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
         // Render
@@ -916,11 +945,12 @@ async function main() {
         }
 
         try {
+            const useDilation = renderer.useDilation || false;
             const slugBuilder = new SlugDataBuilder();
-            const { vertexData, indexData, indexCount } = layoutAndBuildVertices(text, currentFont, slugBuilder);
+            const { vertexData, indexData, indexCount } = layoutAndBuildVertices(text, currentFont, slugBuilder, useDilation);
 
             if (indexCount > 0) {
-                // Apply text color to vertex data
+                // Apply text color to vertex data (color is at offset 72)
                 const hex = colorPicker.value;
                 const r = parseInt(hex.slice(1, 3), 16) / 255;
                 const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -928,10 +958,10 @@ async function main() {
                 const view = new DataView(vertexData);
                 for (let i = 0; i < indexCount / 6 * 4; i++) {
                     const off = i * VERTEX_STRIDE;
-                    view.setFloat32(off + 48, r, true);
-                    view.setFloat32(off + 52, g, true);
-                    view.setFloat32(off + 56, b, true);
-                    view.setFloat32(off + 60, 1.0, true);
+                    view.setFloat32(off + 72, r, true);
+                    view.setFloat32(off + 76, g, true);
+                    view.setFloat32(off + 80, b, true);
+                    view.setFloat32(off + 84, 1.0, true);
                 }
                 renderer.uploadSlugData(slugBuilder);
                 renderer.uploadVertices(vertexData, indexData, indexCount);
@@ -992,6 +1022,14 @@ async function main() {
     // Event handlers
     textInput.addEventListener('input', () => updateText());
     colorPicker.addEventListener('input', () => updateText());
+
+    const dilationCheckbox = document.getElementById('dilationToggle');
+    if (dilationCheckbox) {
+        dilationCheckbox.addEventListener('change', () => {
+            renderer.useDilation = dilationCheckbox.checked;
+            updateText();
+        });
+    }
 
     fontInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
