@@ -441,6 +441,23 @@ class SlugDataBuilder {
         const bandOffsetX = -xMin * bandScaleX;
         const bandOffsetY = -yMin * bandScaleY;
 
+        // Verify band data integrity
+        const totalListEntries = listOffset - numHeaders;
+        for (let b = 0; b < numHBands; b++) {
+            const count = bandRow[(glyphLocX + b) * 4];
+            const off = bandRow[(glyphLocX + b) * 4 + 1];
+            for (let j = 0; j < count; j++) {
+                const cx = bandRow[(glyphLocX + off + j) * 4];
+                const cy = bandRow[(glyphLocX + off + j) * 4 + 1];
+                if (cx >= this.curveTexX + 2 || cy > this.curveTexRow) {
+                    console.error(`INVALID curve loc in hband ${b}: (${cx},${cy}), curveTexX=${this.curveTexX}, curveTexRow=${this.curveTexRow}`);
+                }
+            }
+        }
+
+        const glyphName = glyph.name || `glyph#${glyph.index}`;
+        console.log(`Glyph '${glyphName}': ${curves.length} curves, ${numHBands}h x ${numVBands}v bands, bbox=[${xMin.toFixed(0)},${yMin.toFixed(0)},${xMax.toFixed(0)},${yMax.toFixed(0)}], bandRow=${glyphLocY}`);
+
         const meta = {
             curves,
             glyphLocX, glyphLocY,
