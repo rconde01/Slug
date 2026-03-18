@@ -823,7 +823,7 @@ class SlugRenderer {
         // Upload uniforms
         const uniformData = new Float32Array(20);
         uniformData.set(mvp, 0);
-        uniformData.set([displayW, displayH, 0, 0], 16);
+        uniformData.set([displayW, displayH, this.debugMode || 0, 0], 16);
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
         // Render
@@ -987,6 +987,15 @@ async function main() {
     if (!loaded) {
         showInfo('Please select a .ttf font file using the "Font" button above.');
     }
+
+    // Debug mode toggle: press D to cycle through debug views
+    const debugModes = ['Normal', 'Solid quads', 'H-coverage only', 'V-coverage only'];
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'd' || e.key === 'D') {
+            renderer.debugMode = ((renderer.debugMode || 0) + 1) % debugModes.length;
+            setStatus(`Debug: ${debugModes[renderer.debugMode]}`);
+        }
+    });
 
     // Event handlers
     textInput.addEventListener('input', () => updateText());

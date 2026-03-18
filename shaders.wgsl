@@ -243,6 +243,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
+    // Debug modes via viewport.z:
+    // 0 = normal, 1 = solid quads, 2 = xcov only, 3 = ycov only
+    let debugMode = i32(uniforms.viewport.z);
+    if (debugMode == 1) {
+        return in.color;
+    }
+    if (debugMode == 2) {
+        return vec4<f32>(clamp(abs(xcov), 0.0, 1.0), 0.0, clamp(-xcov, 0.0, 1.0), 1.0);
+    }
+    if (debugMode == 3) {
+        return vec4<f32>(clamp(abs(ycov), 0.0, 1.0), 0.0, clamp(-ycov, 0.0, 1.0), 1.0);
+    }
+
     var coverage = calcCoverage(xcov, ycov, xwgt, ywgt);
     // NaN safety net: if any intermediate computation produced NaN, output 0.
     if (coverage != coverage) { coverage = 0.0; }
