@@ -162,7 +162,7 @@ class Trackball {
     onWheel(e) {
         e.preventDefault();
         this.zoom *= e.deltaY > 0 ? 1.1 : 0.9;
-        this.zoom = Math.max(0.5, Math.min(20, this.zoom));
+        this.zoom = Math.max(0.1, Math.min(200, this.zoom));
     }
 
     getRotationMatrix() {
