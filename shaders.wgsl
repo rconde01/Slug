@@ -72,6 +72,13 @@ fn calcRootCode(y1: f32, y2: f32, y3: f32) -> u32 {
 fn solveHorizPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
     let a = vec2<f32>(p12.x - p12.z * 2.0 + p3.x, p12.y - p12.w * 2.0 + p3.y);
     let b = vec2<f32>(p12.x - p12.z, p12.y - p12.w);
+
+    // If both a.y and b.y are near zero, the curve is degenerate (horizontal).
+    // Return the x-coordinate directly to avoid NaN from 0/0.
+    if (abs(a.y) < 1.0 / 65536.0 && abs(b.y) < 1.0 / 65536.0) {
+        return vec2<f32>(p12.x, p12.x);
+    }
+
     let ra = 1.0 / a.y;
     let rb = 0.5 / b.y;
 
@@ -96,6 +103,12 @@ fn solveHorizPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
 fn solveVertPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
     let a = vec2<f32>(p12.x - p12.z * 2.0 + p3.x, p12.y - p12.w * 2.0 + p3.y);
     let b = vec2<f32>(p12.x - p12.z, p12.y - p12.w);
+
+    // Guard against degenerate (vertical) curves.
+    if (abs(a.x) < 1.0 / 65536.0 && abs(b.x) < 1.0 / 65536.0) {
+        return vec2<f32>(p12.y, p12.y);
+    }
+
     let ra = 1.0 / a.x;
     let rb = 0.5 / b.x;
 
@@ -142,7 +155,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let glyphData = in.glyph;
 
     // Compute pixel-to-em-space ratio from screen-space derivatives.
-    let emsPerPixel = fwidth(renderCoord);
+    // Clamp to avoid division by zero when fwidth is zero (degenerate quads).
+    let emsPerPixel = max(fwidth(renderCoord), vec2<f32>(1.0 / 65536.0));
     let pixelsPerEm = 1.0 / emsPerPixel;
 
     // Extract band maximums. bandMaxY is masked to lower 8 bits (upper bits = flags).
@@ -231,6 +245,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let coverage = calcCoverage(xcov, ycov, xwgt, ywgt);
+    var coverage = calcCoverage(xcov, ycov, xwgt, ywgt);
+    // NaN safety net: if any intermediate computation produced NaN, output 0.
+    if (coverage != coverage) { coverage = 0.0; }
     return in.color * coverage;
 }
