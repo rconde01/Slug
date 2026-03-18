@@ -54,12 +54,14 @@ fn vs_main(
 // Uses sign bits of the three control point y-coordinates to index
 // a lookup table that determines which roots contribute to coverage.
 fn calcRootCode(y1: f32, y2: f32, y3: f32) -> u32 {
+    // Extract sign bits of the three control point coordinates.
+    // i1 bit 0 = sign of y1, i2 bit 1 = sign of y2, i3 bit 2 = sign of y3.
     let i1 = bitcast<u32>(y1) >> 31u;
     let i2 = bitcast<u32>(y2) >> 30u;
     let i3 = bitcast<u32>(y3) >> 29u;
 
-    var shift = (i2 & 2u) | (i1 & (~2u));
-    shift = (i3 & 4u) | (shift & (~4u));
+    // Pack sign bits into a 3-bit index.
+    let shift = (i3 & 4u) | (i2 & 2u) | (i1 & 1u);
 
     // Eligibility returned in bits 0 and 8.
     return (0x2E74u >> shift) & 0x0101u;

@@ -116,7 +116,7 @@ class Trackball {
         this.rotation = quatIdentity();
         this.dragging = false;
         this.lastPoint = null;
-        this.zoom = 3.0;
+        this.zoom = 5.0;
 
         canvas.addEventListener('pointerdown', (e) => this.onDown(e));
         canvas.addEventListener('pointermove', (e) => this.onMove(e));
@@ -304,8 +304,9 @@ class SlugDataBuilder {
             }
         }
 
-        // Add small padding for anti-aliasing (in font units)
-        const pad = Math.max(xMax - xMin, yMax - yMin) * 0.02;
+        // Add padding for anti-aliasing (in font units).
+        // Use 5% of glyph size or minimum 20 font units, whichever is larger.
+        const pad = Math.max(Math.max(xMax - xMin, yMax - yMin) * 0.05, 20);
         const bboxPadded = { xMin: xMin - pad, yMin: yMin - pad, xMax: xMax + pad, yMax: yMax + pad };
 
         // Choose band counts based on curve complexity
@@ -430,9 +431,11 @@ class SlugDataBuilder {
 
         this.bandTexRow++;
 
-        // Compute band transform
-        const bandScaleX = numVBands / (xMax - xMin);
-        const bandScaleY = numHBands / (yMax - yMin);
+        // Compute band transform (guard against zero-size bbox)
+        const dx = Math.max(xMax - xMin, 0.001);
+        const dy = Math.max(yMax - yMin, 0.001);
+        const bandScaleX = numVBands / dx;
+        const bandScaleY = numHBands / dy;
         const bandOffsetX = -xMin * bandScaleX;
         const bandOffsetY = -yMin * bandScaleY;
 
@@ -513,9 +516,13 @@ function layoutAndBuildVertices(text, font, slugBuilder) {
         cursorX += meta.advanceWidth;
     }
 
-    // Center text
+    // Center text horizontally and vertically
     const totalWidth = cursorX;
     const offsetX = -totalWidth / 2;
+    // Center vertically using font ascender/descender
+    const ascender = (font.ascender || 800) / upm;
+    const descender = (font.descender || -200) / upm;
+    const offsetY = -(ascender + descender) / 2;
 
     if (quads.length === 0) return { vertexData: null, indexData: null, indexCount: 0 };
 
@@ -533,9 +540,9 @@ function layoutAndBuildVertices(text, font, slugBuilder) {
 
         // Object-space quad corners (world coordinates)
         const x0 = worldX + bbox.xMin * scale;
-        const y0 = bbox.yMin * scale;
+        const y0 = offsetY + bbox.yMin * scale;
         const x1 = worldX + bbox.xMax * scale;
-        const y1 = bbox.yMax * scale;
+        const y1 = offsetY + bbox.yMax * scale;
 
         // Em-space texcoords (raw font units with padding)
         const u0 = bbox.xMin;
@@ -872,6 +879,12 @@ async function main() {
         statusEl.textContent = msg;
     }
 
+    // Check opentype.js is loaded
+    if (typeof opentype === 'undefined') {
+        showError('opentype.js failed to load. Check your internet connection and reload.');
+        return;
+    }
+
     // Initialize renderer
     let renderer;
     try {
@@ -941,9 +954,9 @@ async function main() {
     // Try loading a default font from CDN
     async function loadDefaultFont() {
         const urls = [
-            'https://cdn.jsdelivr.net/npm/@fontsource/roboto@5.1.1/files/roboto-latin-400-normal.woff',
-            'https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.0/files/inter-latin-400-normal.woff',
-            'https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxK.woff2',
+            'https://cdn.jsdelivr.net/npm/@fontsource/roboto/files/roboto-latin-400-normal.woff',
+            'https://cdn.jsdelivr.net/npm/@fontsource/inter/files/inter-latin-400-normal.woff',
+            'https://cdn.jsdelivr.net/npm/@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff',
         ];
 
         for (const url of urls) {
