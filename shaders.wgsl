@@ -119,8 +119,8 @@ fn solveVertPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
 // wrapping at the band texture width (4096).
 fn calcBandLoc(glyphLoc: vec2<i32>, offset: u32) -> vec2<i32> {
     var loc = vec2<i32>(glyphLoc.x + i32(offset), glyphLoc.y);
-    loc.y += loc.x >> i32(BAND_TEX_LOG_W);
-    loc.x &= (1 << i32(BAND_TEX_LOG_W)) - 1;
+    loc.y += loc.x >> BAND_TEX_LOG_W;
+    loc.x &= i32(1u << BAND_TEX_LOG_W) - 1;
     return loc;
 }
 
