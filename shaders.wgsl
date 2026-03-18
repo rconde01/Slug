@@ -182,10 +182,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let p12 = textureLoad(curveTexture, curveLoc, 0) - vec4<f32>(renderCoord, renderCoord);
         let p3 = textureLoad(curveTexture, vec2<i32>(curveLoc.x + 1, curveLoc.y), 0).xy - renderCoord;
 
-        // Early exit: if all control points are left of the pixel, no more curves can contribute.
-        if (max(max(p12.x, p12.z), p3.x) * pixelsPerEm.x < -0.5) {
-            break;
-        }
+        // Early exit disabled for debugging
+        // if (max(max(p12.x, p12.z), p3.x) * pixelsPerEm.x < -0.5) {
+        //     break;
+        // }
 
         let code = calcRootCode(p12.y, p12.w, p3.y);
         if (code != 0u) {
@@ -221,10 +221,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let p12 = textureLoad(curveTexture, curveLoc, 0) - vec4<f32>(renderCoord, renderCoord);
         let p3 = textureLoad(curveTexture, vec2<i32>(curveLoc.x + 1, curveLoc.y), 0).xy - renderCoord;
 
-        // Early exit: if all control points are below the pixel.
-        if (max(max(p12.y, p12.w), p3.y) * pixelsPerEm.y < -0.5) {
-            break;
-        }
+        // Early exit disabled for debugging
+        // if (max(max(p12.y, p12.w), p3.y) * pixelsPerEm.y < -0.5) {
+        //     break;
+        // }
 
         let code = calcRootCode(p12.x, p12.z, p3.x);
         if (code != 0u) {
