@@ -178,6 +178,12 @@ function extractQuadraticCurves(glyph) {
     if (!glyph.path || !glyph.path.commands) return [];
     const commands = glyph.path.commands;
     if (commands.length === 0) return [];
+
+    // Log command types for debugging
+    const cmdTypes = commands.map(c => c.type).join('');
+    const glyphName = glyph.name || `#${glyph.index}`;
+    console.log(`Glyph '${glyphName}' commands: ${cmdTypes}`);
+
     const curves = [];
     let cx = 0, cy = 0;
     let startX = 0, startY = 0;
