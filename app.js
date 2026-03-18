@@ -175,7 +175,9 @@ class Trackball {
 // ============================================================
 
 function extractQuadraticCurves(glyph) {
+    if (!glyph.path || !glyph.path.commands) return [];
     const commands = glyph.path.commands;
+    if (commands.length === 0) return [];
     const curves = [];
     let cx = 0, cy = 0;
     let startX = 0, startY = 0;
@@ -908,35 +910,41 @@ async function main() {
         const text = textInput.value || '';
         if (text.trim().length === 0) {
             renderer.uploadVertices(null, null, 0);
+            setStatus('');
             return;
         }
 
-        const slugBuilder = new SlugDataBuilder();
-        const { vertexData, indexData, indexCount } = layoutAndBuildVertices(text, currentFont, slugBuilder);
+        try {
+            const slugBuilder = new SlugDataBuilder();
+            const { vertexData, indexData, indexCount } = layoutAndBuildVertices(text, currentFont, slugBuilder);
 
-        if (indexCount > 0) {
-            // Apply text color to vertex data
-            const hex = colorPicker.value;
-            const r = parseInt(hex.slice(1, 3), 16) / 255;
-            const g = parseInt(hex.slice(3, 5), 16) / 255;
-            const b = parseInt(hex.slice(5, 7), 16) / 255;
-            const view = new DataView(vertexData);
-            for (let i = 0; i < indexCount / 6 * 4; i++) {
-                const off = i * VERTEX_STRIDE;
-                view.setFloat32(off + 48, r, true);
-                view.setFloat32(off + 52, g, true);
-                view.setFloat32(off + 56, b, true);
-                view.setFloat32(off + 60, 1.0, true);
+            if (indexCount > 0) {
+                // Apply text color to vertex data
+                const hex = colorPicker.value;
+                const r = parseInt(hex.slice(1, 3), 16) / 255;
+                const g = parseInt(hex.slice(3, 5), 16) / 255;
+                const b = parseInt(hex.slice(5, 7), 16) / 255;
+                const view = new DataView(vertexData);
+                for (let i = 0; i < indexCount / 6 * 4; i++) {
+                    const off = i * VERTEX_STRIDE;
+                    view.setFloat32(off + 48, r, true);
+                    view.setFloat32(off + 52, g, true);
+                    view.setFloat32(off + 56, b, true);
+                    view.setFloat32(off + 60, 1.0, true);
+                }
+                renderer.uploadSlugData(slugBuilder);
+                renderer.uploadVertices(vertexData, indexData, indexCount);
+            } else {
+                renderer.uploadVertices(null, null, 0);
             }
-            renderer.uploadSlugData(slugBuilder);
-            renderer.uploadVertices(vertexData, indexData, indexCount);
-        } else {
-            renderer.uploadVertices(null, null, 0);
-        }
 
-        const numGlyphs = indexCount / 6;
-        const numCurves = slugBuilder.curveTexX / 2;
-        setStatus(`${numGlyphs} glyphs, ${numCurves} curves`);
+            const numGlyphs = indexCount / 6;
+            const numCurves = slugBuilder.curveTexX / 2;
+            setStatus(`${numGlyphs} glyphs, ${numCurves} curves, tex: ${slugBuilder.getCurveTexHeight()}x${slugBuilder.getBandTexHeight()} rows`);
+        } catch (e) {
+            console.error('Text update error:', e);
+            setStatus(`Error: ${e.message}`);
+        }
     }
 
     // Load font from ArrayBuffer
