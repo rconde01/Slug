@@ -179,11 +179,6 @@ function extractQuadraticCurves(glyph) {
     const commands = glyph.path.commands;
     if (commands.length === 0) return [];
 
-    // Log command types for debugging
-    const cmdTypes = commands.map(c => c.type).join('');
-    const glyphName = glyph.name || `#${glyph.index}`;
-    console.log(`Glyph '${glyphName}' commands: ${cmdTypes}`);
-
     const curves = [];
     let cx = 0, cy = 0;
     let startX = 0, startY = 0;
@@ -446,23 +441,6 @@ class SlugDataBuilder {
         const bandScaleY = numHBands / dy;
         const bandOffsetX = -xMin * bandScaleX;
         const bandOffsetY = -yMin * bandScaleY;
-
-        // Verify band data integrity
-        const totalListEntries = listOffset - numHeaders;
-        for (let b = 0; b < numHBands; b++) {
-            const count = bandRow[(glyphLocX + b) * 4];
-            const off = bandRow[(glyphLocX + b) * 4 + 1];
-            for (let j = 0; j < count; j++) {
-                const cx = bandRow[(glyphLocX + off + j) * 4];
-                const cy = bandRow[(glyphLocX + off + j) * 4 + 1];
-                if (cx >= this.curveTexX + 2 || cy > this.curveTexRow) {
-                    console.error(`INVALID curve loc in hband ${b}: (${cx},${cy}), curveTexX=${this.curveTexX}, curveTexRow=${this.curveTexRow}`);
-                }
-            }
-        }
-
-        const glyphName = glyph.name || `glyph#${glyph.index}`;
-        console.log(`Glyph '${glyphName}': ${curves.length} curves, ${numHBands}h x ${numVBands}v bands, bbox=[${xMin.toFixed(0)},${yMin.toFixed(0)},${xMax.toFixed(0)},${yMax.toFixed(0)}], bandRow=${glyphLocY}`);
 
         const meta = {
             curves,
@@ -846,7 +824,7 @@ class SlugRenderer {
         // Upload uniforms
         const uniformData = new Float32Array(20);
         uniformData.set(mvp, 0);
-        uniformData.set([displayW, displayH, this.debugMode || 0, 0], 16);
+        uniformData.set([displayW, displayH, 0, 0], 16);
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
         // Render
@@ -1010,15 +988,6 @@ async function main() {
     if (!loaded) {
         showInfo('Please select a .ttf font file using the "Font" button above.');
     }
-
-    // Debug mode toggle: press D to cycle through debug views
-    const debugModes = ['Normal', 'Solid quads', 'H-coverage only', 'V-coverage only'];
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'd' || e.key === 'D') {
-            renderer.debugMode = ((renderer.debugMode || 0) + 1) % debugModes.length;
-            setStatus(`Debug: ${debugModes[renderer.debugMode]}`);
-        }
-    });
 
     // Event handlers
     textInput.addEventListener('input', () => updateText());

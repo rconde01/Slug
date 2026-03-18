@@ -6,6 +6,7 @@
 
 // Band texture uses a fixed width of 4096 texels.
 const BAND_TEX_LOG_W: u32 = 12u;
+const BAND_TEX_MASK: i32 = (1 << 12) - 1;   // 0xFFF
 
 // --- Bindings ---
 
@@ -69,11 +70,11 @@ fn calcRootCode(y1: f32, y2: f32, y3: f32) -> u32 {
 
 // Solve for x-coordinates where the curve crosses y = 0.
 // The quadratic polynomial is: a*t^2 - 2*b*t + c
+// Branches before division to avoid 0*inf=NaN on degenerate curves.
 fn solveHorizPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
     let a = vec2<f32>(p12.x - p12.z * 2.0 + p3.x, p12.y - p12.w * 2.0 + p3.y);
     let b = vec2<f32>(p12.x - p12.z, p12.y - p12.w);
 
-    // Branch BEFORE any division to avoid 0*inf=NaN.
     if (abs(a.y) < 1.0 / 65536.0) {
         // Nearly linear or fully degenerate.
         if (abs(b.y) < 1.0 / 65536.0) {
@@ -125,8 +126,8 @@ fn solveVertPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
 // wrapping at the band texture width (4096).
 fn calcBandLoc(glyphLoc: vec2<i32>, offset: u32) -> vec2<i32> {
     var loc = vec2<i32>(glyphLoc.x + i32(offset), glyphLoc.y);
-    loc.y += loc.x >> 12u;
-    loc.x = loc.x & 0xFFF;
+    loc.y += loc.x >> BAND_TEX_LOG_W;
+    loc.x = loc.x & BAND_TEX_MASK;
     return loc;
 }
 
@@ -182,6 +183,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let p12 = textureLoad(curveTexture, curveLoc, 0) - vec4<f32>(renderCoord, renderCoord);
         let p3 = textureLoad(curveTexture, vec2<i32>(curveLoc.x + 1, curveLoc.y), 0).xy - renderCoord;
 
+        // Early exit: if all control points are left of the pixel, no more curves can contribute.
         if (max(max(p12.x, p12.z), p3.x) * pixelsPerEm.x < -0.5) {
             break;
         }
@@ -190,16 +192,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if (code != 0u) {
             let r = solveHorizPoly(p12, p3) * pixelsPerEm.x;
 
-            // Skip if solver produced NaN or infinity (abs check rejects both).
-            if (abs(r.x) < 1e15 && abs(r.y) < 1e15) {
-                if ((code & 1u) != 0u) {
-                    xcov += clamp(r.x + 0.5, 0.0, 1.0);
-                    xwgt = max(xwgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
-                }
-                if (code > 1u) {
-                    xcov -= clamp(r.y + 0.5, 0.0, 1.0);
-                    xwgt = max(xwgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
-                }
+            if ((code & 1u) != 0u) {
+                xcov += clamp(r.x + 0.5, 0.0, 1.0);
+                xwgt = max(xwgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
+            }
+            if (code > 1u) {
+                xcov -= clamp(r.y + 0.5, 0.0, 1.0);
+                xwgt = max(xwgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
             }
         }
     }
@@ -220,6 +219,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let p12 = textureLoad(curveTexture, curveLoc, 0) - vec4<f32>(renderCoord, renderCoord);
         let p3 = textureLoad(curveTexture, vec2<i32>(curveLoc.x + 1, curveLoc.y), 0).xy - renderCoord;
 
+        // Early exit: if all control points are below the pixel.
         if (max(max(p12.y, p12.w), p3.y) * pixelsPerEm.y < -0.5) {
             break;
         }
@@ -228,34 +228,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if (code != 0u) {
             let r = solveVertPoly(p12, p3) * pixelsPerEm.y;
 
-            if (abs(r.x) < 1e15 && abs(r.y) < 1e15) {
-                if ((code & 1u) != 0u) {
-                    ycov -= clamp(r.x + 0.5, 0.0, 1.0);
-                    ywgt = max(ywgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
-                }
-                if (code > 1u) {
-                    ycov += clamp(r.y + 0.5, 0.0, 1.0);
-                    ywgt = max(ywgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
-                }
+            if ((code & 1u) != 0u) {
+                ycov -= clamp(r.x + 0.5, 0.0, 1.0);
+                ywgt = max(ywgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
+            }
+            if (code > 1u) {
+                ycov += clamp(r.y + 0.5, 0.0, 1.0);
+                ywgt = max(ywgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
             }
         }
     }
 
-    // Debug modes via viewport.z:
-    // 0 = normal, 1 = solid quads, 2 = xcov only, 3 = ycov only
-    let debugMode = i32(uniforms.viewport.z);
-    if (debugMode == 1) {
-        return in.color;
-    }
-    if (debugMode == 2) {
-        return vec4<f32>(clamp(abs(xcov), 0.0, 1.0), 0.0, clamp(-xcov, 0.0, 1.0), 1.0);
-    }
-    if (debugMode == 3) {
-        return vec4<f32>(clamp(abs(ycov), 0.0, 1.0), 0.0, clamp(-ycov, 0.0, 1.0), 1.0);
-    }
-
-    var coverage = calcCoverage(xcov, ycov, xwgt, ywgt);
-    // NaN safety net: if any intermediate computation produced NaN, output 0.
-    if (coverage != coverage) { coverage = 0.0; }
+    let coverage = calcCoverage(xcov, ycov, xwgt, ywgt);
     return in.color * coverage;
 }
