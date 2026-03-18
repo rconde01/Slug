@@ -198,13 +198,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if (code != 0u) {
             let r = solveHorizPoly(p12, p3) * pixelsPerEm.x;
 
-            if ((code & 1u) != 0u) {
-                xcov += clamp(r.x + 0.5, 0.0, 1.0);
-                xwgt = max(xwgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
-            }
-            if (code > 1u) {
-                xcov -= clamp(r.y + 0.5, 0.0, 1.0);
-                xwgt = max(xwgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
+            // Skip if solver produced NaN or infinity (abs check rejects both).
+            if (abs(r.x) < 1e15 && abs(r.y) < 1e15) {
+                if ((code & 1u) != 0u) {
+                    xcov += clamp(r.x + 0.5, 0.0, 1.0);
+                    xwgt = max(xwgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
+                }
+                if (code > 1u) {
+                    xcov -= clamp(r.y + 0.5, 0.0, 1.0);
+                    xwgt = max(xwgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
+                }
             }
         }
     }
@@ -234,13 +237,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if (code != 0u) {
             let r = solveVertPoly(p12, p3) * pixelsPerEm.y;
 
-            if ((code & 1u) != 0u) {
-                ycov -= clamp(r.x + 0.5, 0.0, 1.0);
-                ywgt = max(ywgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
-            }
-            if (code > 1u) {
-                ycov += clamp(r.y + 0.5, 0.0, 1.0);
-                ywgt = max(ywgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
+            if (abs(r.x) < 1e15 && abs(r.y) < 1e15) {
+                if ((code & 1u) != 0u) {
+                    ycov -= clamp(r.x + 0.5, 0.0, 1.0);
+                    ywgt = max(ywgt, clamp(1.0 - abs(r.x) * 2.0, 0.0, 1.0));
+                }
+                if (code > 1u) {
+                    ycov += clamp(r.y + 0.5, 0.0, 1.0);
+                    ywgt = max(ywgt, clamp(1.0 - abs(r.y) * 2.0, 0.0, 1.0));
+                }
             }
         }
     }
