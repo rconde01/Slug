@@ -162,7 +162,7 @@ class Trackball {
     onWheel(e) {
         e.preventDefault();
         this.zoom *= e.deltaY > 0 ? 1.1 : 0.9;
-        this.zoom = Math.max(0.1, Math.min(200, this.zoom));
+        this.zoom = Math.max(0.01, Math.min(1000, this.zoom));
     }
 
     getRotationMatrix() {
@@ -815,7 +815,7 @@ class SlugRenderer {
         const fovY = Math.PI / 4;
 
         // MVP = projection * view * model
-        const projection = mat4Perspective(fovY, aspect, 0.1, 100);
+        const projection = mat4Perspective(fovY, aspect, 0.01, 2000);
         const view = mat4Translate(0, 0, -trackball.zoom);
         const model = trackball.getRotationMatrix();
         const mvp = mat4Multiply(projection, mat4Multiply(view, model));
