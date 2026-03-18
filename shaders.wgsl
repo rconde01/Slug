@@ -73,25 +73,22 @@ fn solveHorizPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
     let a = vec2<f32>(p12.x - p12.z * 2.0 + p3.x, p12.y - p12.w * 2.0 + p3.y);
     let b = vec2<f32>(p12.x - p12.z, p12.y - p12.w);
 
-    // If both a.y and b.y are near zero, the curve is degenerate (horizontal).
-    // Return the x-coordinate directly to avoid NaN from 0/0.
-    if (abs(a.y) < 1.0 / 65536.0 && abs(b.y) < 1.0 / 65536.0) {
-        return vec2<f32>(p12.x, p12.x);
-    }
-
-    let ra = 1.0 / a.y;
-    let rb = 0.5 / b.y;
-
-    let d = sqrt(max(b.y * b.y - a.y * p12.y, 0.0));
-    var t1 = (b.y - d) * ra;
-    var t2 = (b.y + d) * ra;
-
-    // If polynomial is nearly linear, solve -2b*t + c = 0.
+    // Branch BEFORE any division to avoid 0*inf=NaN.
     if (abs(a.y) < 1.0 / 65536.0) {
-        let t = p12.y * rb;
-        t1 = t;
-        t2 = t;
+        // Nearly linear or fully degenerate.
+        if (abs(b.y) < 1.0 / 65536.0) {
+            return vec2<f32>(p12.x, p12.x);
+        }
+        let t = p12.y * 0.5 / b.y;
+        let x = (a.x * t - b.x * 2.0) * t + p12.x;
+        return vec2<f32>(x, x);
     }
+
+    // Quadratic case: a.y is safely non-zero.
+    let ra = 1.0 / a.y;
+    let d = sqrt(max(b.y * b.y - a.y * p12.y, 0.0));
+    let t1 = (b.y - d) * ra;
+    let t2 = (b.y + d) * ra;
 
     return vec2<f32>(
         (a.x * t1 - b.x * 2.0) * t1 + p12.x,
@@ -104,23 +101,19 @@ fn solveVertPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
     let a = vec2<f32>(p12.x - p12.z * 2.0 + p3.x, p12.y - p12.w * 2.0 + p3.y);
     let b = vec2<f32>(p12.x - p12.z, p12.y - p12.w);
 
-    // Guard against degenerate (vertical) curves.
-    if (abs(a.x) < 1.0 / 65536.0 && abs(b.x) < 1.0 / 65536.0) {
-        return vec2<f32>(p12.y, p12.y);
+    if (abs(a.x) < 1.0 / 65536.0) {
+        if (abs(b.x) < 1.0 / 65536.0) {
+            return vec2<f32>(p12.y, p12.y);
+        }
+        let t = p12.x * 0.5 / b.x;
+        let y = (a.y * t - b.y * 2.0) * t + p12.y;
+        return vec2<f32>(y, y);
     }
 
     let ra = 1.0 / a.x;
-    let rb = 0.5 / b.x;
-
     let d = sqrt(max(b.x * b.x - a.x * p12.x, 0.0));
-    var t1 = (b.x - d) * ra;
-    var t2 = (b.x + d) * ra;
-
-    if (abs(a.x) < 1.0 / 65536.0) {
-        let t = p12.x * rb;
-        t1 = t;
-        t2 = t;
-    }
+    let t1 = (b.x - d) * ra;
+    let t2 = (b.x + d) * ra;
 
     return vec2<f32>(
         (a.y * t1 - b.y * 2.0) * t1 + p12.y,
