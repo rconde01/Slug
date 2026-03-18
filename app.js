@@ -197,10 +197,11 @@ function extractQuadraticCurves(glyph) {
                 cy = cmd.y;
                 break;
             case 'L': {
-                // Convert line segment to degenerate quadratic.
-                const mx = (cx + cmd.x) / 2;
-                const my = (cy + cmd.y) / 2;
-                curves.push({ p1: { x: cx, y: cy }, p2: { x: mx, y: my }, p3: { x: cmd.x, y: cmd.y } });
+                // Convert line segment to degenerate quadratic with p2 = p1.
+                // Using p1 (not midpoint) prevents calcRootCode sign-bit instability:
+                // with midpoint, p2.y sits ON the line, so its sign relative to the
+                // pixel flips at the line's midpoint, causing noise between adjacent pixels.
+                curves.push({ p1: { x: cx, y: cy }, p2: { x: cx, y: cy }, p3: { x: cmd.x, y: cmd.y } });
                 cx = cmd.x;
                 cy = cmd.y;
                 break;
@@ -225,9 +226,8 @@ function extractQuadraticCurves(glyph) {
             }
             case 'Z':
                 if (Math.abs(cx - startX) > 0.01 || Math.abs(cy - startY) > 0.01) {
-                    const mx = (cx + startX) / 2;
-                    const my = (cy + startY) / 2;
-                    curves.push({ p1: { x: cx, y: cy }, p2: { x: mx, y: my }, p3: { x: startX, y: startY } });
+                    // Use p2 = p1 for closing segments too (same stability fix as L).
+                    curves.push({ p1: { x: cx, y: cy }, p2: { x: cx, y: cy }, p3: { x: startX, y: startY } });
                 }
                 cx = startX;
                 cy = startY;
