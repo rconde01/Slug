@@ -803,6 +803,7 @@ class SlugRenderer {
         const dpr = window.devicePixelRatio || 1;
         const displayW = Math.floor(this.canvas.clientWidth * dpr);
         const displayH = Math.floor(this.canvas.clientHeight * dpr);
+        if (displayW === 0 || displayH === 0) return;
         if (this.canvas.width !== displayW || this.canvas.height !== displayH) {
             this.canvas.width = displayW;
             this.canvas.height = displayH;
