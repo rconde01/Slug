@@ -103,3 +103,30 @@ Then open `http://localhost:8000` in a WebGPU-capable browser.
 - **Color picker**: Change text color
 - **Mouse drag**: Rotate text (trackball)
 - **Scroll wheel**: Zoom in/out
+
+## Phase 2: Verification & Fixes
+
+### Data Flow Verification
+
+Traced the complete data flow through a concrete example (letter "L" with 6 line-segment curves):
+
+1. **Curve extraction**: 6 path commands produce 6 degenerate quadratic curves (line segments with midpoint control points). Verified correct.
+2. **Band assignment**: With 3 horizontal + 3 vertical bands, curves are correctly assigned based on coordinate range overlap.
+3. **Sorting**: Horizontal bands sorted by descending max-x, vertical by descending max-y. Matches the shader's early-exit optimization.
+4. **Band texture layout**: Headers at offsets `0..numHBands-1` (horizontal) and `numHBands..numHBands+numVBands-1` (vertical). Curve lists follow at subsequent offsets. Matches shader addressing exactly.
+5. **Coverage computation**: For a point inside the glyph at (300, 700), the rightward ray crosses one edge giving xcov=1.0, the upward ray crosses one edge giving ycov=1.0. Final coverage = 1.0 (fully inside). Correct.
+
+### Fixes Applied
+
+- **Shader portability**: Replaced `~` (bitwise NOT) operator in `calcRootCode` with equivalent portable bit-masking: `(i3 & 4u) | (i2 & 2u) | (i1 & 1u)`.
+- **Bounding box padding**: Increased from 2% to 5%/20 font units minimum for better anti-aliasing margin at glyph edges.
+- **Zero-size bbox guard**: Band transform computation guards against division by zero.
+- **Vertical centering**: Text is centered vertically using font ascender/descender values.
+- **Error handling**: Text update wrapped in try-catch, glyph path access has null guards.
+
+### Known Limitations
+
+- **No dynamic dilation**: The original Slug vertex shader dilates glyph quads by exactly half a pixel. This implementation uses fixed CPU-side padding instead, which may be insufficient at extreme zoom levels.
+- **Curve list wrapping**: If a single glyph's band data exceeds 4096 texels, the curve list reads would go out of bounds. Unlikely for typical font glyphs (<100 curves).
+- **Font format**: WOFF2 fonts require a separate decompression library not included. Use .ttf, .otf, or .woff files.
+- **Single-line text**: Layout is horizontal single-line only. No line wrapping or multi-line support.
