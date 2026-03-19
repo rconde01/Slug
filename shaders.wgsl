@@ -4,10 +4,6 @@
 // Original HLSL reference: MIT License, Copyright 2017
 // ============================================================
 
-// Band texture uses a fixed width of 4096 texels.
-const BAND_TEX_LOG_W: u32 = 12u;
-const BAND_TEX_MASK: i32 = (1 << 12) - 1;   // 0xFFF
-
 // --- Bindings ---
 
 struct Uniforms {
@@ -16,8 +12,8 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var curveTexture: texture_2d<f32>;
-@group(0) @binding(2) var bandTexture: texture_2d<u32>;
+@group(0) @binding(1) var<storage, read> curveBuffer: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> bandBuffer: array<vec4<u32>>;
 
 // --- Inter-stage structures ---
 
@@ -175,15 +171,6 @@ fn solveVertPoly(p12: vec4<f32>, p3: vec2<f32>) -> vec2<f32> {
     );
 }
 
-// Compute 2D texture coordinate from glyph location + linear offset,
-// wrapping at the band texture width (4096).
-fn calcBandLoc(glyphLoc: vec2<i32>, offset: u32) -> vec2<i32> {
-    var loc = vec2<i32>(glyphLoc.x + i32(offset), glyphLoc.y);
-    loc.y += loc.x >> BAND_TEX_LOG_W;
-    loc.x = loc.x & BAND_TEX_MASK;
-    return loc;
-}
-
 // Combine horizontal and vertical coverage using confidence weights.
 // Absolute values ensure that either winding direction convention works.
 fn calcCoverage(xcov: f32, ycov: f32, xwgt: f32, ywgt: f32) -> f32 {
@@ -218,31 +205,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         vec2<i32>(0, 0),
         vec2<i32>(bandMaxX, bandMaxY)
     );
-    let glyphLoc = glyphData.xy;
+
+    // glyphData.x = flat offset into bandBuffer for this glyph's band data.
+    let glyphBase = glyphData.x;
 
     // ---- Process horizontal band (rightward ray) ----
 
     var xcov: f32 = 0.0;
     var xwgt: f32 = 0.0;
 
-    // Fetch data for the horizontal band from the band texture. The number
-    // of curves intersecting the band is in the x component, and the offset
-    // to the list of locations for those curves is in the y component.
-    let hbandRaw = textureLoad(bandTexture, vec2<i32>(glyphLoc.x + bandIndex.y, glyphLoc.y), 0).xy;
+    // Fetch data for the horizontal band. The number of curves intersecting
+    // the band is in .x, and the offset to the curve list is in .y.
+    let hbandRaw = bandBuffer[glyphBase + bandIndex.y].xy;
     let hcount = min(hbandRaw.x, 256u);
-    let hbandLoc = calcBandLoc(glyphLoc, hbandRaw.y);
+    let hlistStart = glyphBase + i32(hbandRaw.y);
 
     // Loop over all curves in the horizontal band.
     for (var ci: i32 = 0; ci < i32(hcount); ci++) {
-        // Fetch the location of the current curve from the band texture.
-        let rawLoc = textureLoad(bandTexture, vec2<i32>(hbandLoc.x + ci, hbandLoc.y), 0).xy;
-        let curveLoc = vec2<i32>(i32(rawLoc.x), i32(rawLoc.y));
+        // Fetch the flat index of the current curve in curveBuffer.
+        let curveIndex = i32(bandBuffer[hlistStart + ci].x);
 
-        // Fetch the three 2D control points for the current curve. Subtracting the render
-        // coordinates makes the curve relative to the sample position. The quadratic Bezier
-        // curve C(t) is given by C(t) = (1-t)^2 p1 + 2t(1-t) p2 + t^2 p3
-        let p12 = textureLoad(curveTexture, curveLoc, 0) - vec4<f32>(renderCoord, renderCoord);
-        let p3 = textureLoad(curveTexture, vec2<i32>(curveLoc.x + 1, curveLoc.y), 0).xy - renderCoord;
+        // Fetch the three 2D control points for the current curve.
+        // Entry [curveIndex] holds (p1.x, p1.y, p2.x, p2.y), entry [curveIndex+1] holds (p3.x, p3.y, -, -).
+        // Subtracting renderCoord makes the curve relative to the sample position.
+        let p12 = curveBuffer[curveIndex] - vec4<f32>(renderCoord, renderCoord);
+        let p3 = curveBuffer[curveIndex + 1].xy - renderCoord;
 
         // If the largest x coordinate among all three control points falls
         // left of the current pixel, no more curves can contribute (sorted descending by max x).
@@ -276,17 +263,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Fetch data for the vertical band. This follows the data for all
     // horizontal bands, so we offset by bandMaxY + 1.
-    let vbandRaw = textureLoad(bandTexture, vec2<i32>(glyphLoc.x + bandMaxY + 1 + bandIndex.x, glyphLoc.y), 0).xy;
+    let vbandRaw = bandBuffer[glyphBase + bandMaxY + 1 + bandIndex.x].xy;
     let vcount = min(vbandRaw.x, 256u);
-    let vbandLoc = calcBandLoc(glyphLoc, vbandRaw.y);
+    let vlistStart = glyphBase + i32(vbandRaw.y);
 
     // Loop over all curves in the vertical band.
     for (var ci: i32 = 0; ci < i32(vcount); ci++) {
-        let rawLoc = textureLoad(bandTexture, vec2<i32>(vbandLoc.x + ci, vbandLoc.y), 0).xy;
-        let curveLoc = vec2<i32>(i32(rawLoc.x), i32(rawLoc.y));
+        let curveIndex = i32(bandBuffer[vlistStart + ci].x);
 
-        let p12 = textureLoad(curveTexture, curveLoc, 0) - vec4<f32>(renderCoord, renderCoord);
-        let p3 = textureLoad(curveTexture, vec2<i32>(curveLoc.x + 1, curveLoc.y), 0).xy - renderCoord;
+        let p12 = curveBuffer[curveIndex] - vec4<f32>(renderCoord, renderCoord);
+        let p3 = curveBuffer[curveIndex + 1].xy - renderCoord;
 
         // Early exit: if all control points are below the pixel.
         if (max(max(p12.y, p12.w), p3.y) * pixelsPerEm.y < -0.5) {

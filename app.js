@@ -266,15 +266,12 @@ function quadFromCubic(a, b, c, d) {
 // Section 4: Slug Data Builder
 // ============================================================
 
-const BAND_TEX_WIDTH = 4096;
-
 class SlugDataBuilder {
     constructor() {
-        this.curveTexData = []; // rows of Float32Array data
-        this.bandTexData = [];  // rows of Uint32Array data
-        this.curveTexRow = 0;
-        this.curveTexX = 0;
-        this.bandTexRow = 0;
+        this.curveData = [];      // flat array of floats, 4 per vec4 entry
+        this.bandData = [];       // flat array of uints, 4 per vec4 entry
+        this.curveEntryCount = 0; // number of vec4 entries in curveData
+        this.bandEntryCount = 0;  // number of vec4 entries in bandData
         this.glyphCache = new Map();
     }
 
@@ -286,7 +283,7 @@ class SlugDataBuilder {
         if (curves.length === 0) {
             const meta = {
                 curves: [],
-                glyphLocX: 0, glyphLocY: 0,
+                glyphBandOffset: 0,
                 bandMaxX: 0, bandMaxY: 0,
                 bandTransform: [1, 1, 0, 0],
                 bbox: null,
@@ -316,29 +313,14 @@ class SlugDataBuilder {
         const numHBands = Math.max(2, Math.min(16, Math.ceil(Math.sqrt(curves.length))));
         const numVBands = Math.max(2, Math.min(16, Math.ceil(Math.sqrt(curves.length))));
 
-        // Write curves to curve texture
+        // Write curves to curve buffer (2 vec4 entries per curve)
         const curveLocs = [];
-        this._ensureCurveRow(this.curveTexRow);
-
-        // Check if we need a new row
-        if (this.curveTexX + curves.length * 2 > BAND_TEX_WIDTH) {
-            this.curveTexRow++;
-            this.curveTexX = 0;
-        }
-        this._ensureCurveRow(this.curveTexRow);
-
         for (const c of curves) {
-            const locX = this.curveTexX;
-            const locY = this.curveTexRow;
-            curveLocs.push({ x: locX, y: locY });
-
-            const row = this.curveTexData[locY];
-            const off = locX * 4;
-            row[off] = c.p1.x; row[off + 1] = c.p1.y; row[off + 2] = c.p2.x; row[off + 3] = c.p2.y;
-            const off2 = (locX + 1) * 4;
-            row[off2] = c.p3.x; row[off2 + 1] = c.p3.y; row[off2 + 2] = 0; row[off2 + 3] = 0;
-
-            this.curveTexX += 2;
+            const flatIndex = this.curveEntryCount;
+            curveLocs.push(flatIndex);
+            this.curveData.push(c.p1.x, c.p1.y, c.p2.x, c.p2.y); // entry [flatIndex]
+            this.curveData.push(c.p3.x, c.p3.y, 0, 0);            // entry [flatIndex + 1]
+            this.curveEntryCount += 2;
         }
 
         // Assign curves to bands
@@ -382,57 +364,38 @@ class SlugDataBuilder {
             });
         }
 
-        // Pack band texture data (one row per glyph)
-        const glyphLocX = 0;
-        const glyphLocY = this.bandTexRow;
-        this._ensureBandRow(glyphLocY);
-        const bandRow = this.bandTexData[glyphLocY];
-
+        // Pack band data: headers first, then curve lists.
+        // All offsets are relative to glyphBandOffset.
+        const glyphBandOffset = this.bandEntryCount;
         const numHeaders = numHBands + numVBands;
         let listOffset = numHeaders;
 
-        // Write horizontal band headers
+        // Pre-compute listOffsets for each band header
+        // Write all horizontal band headers
         for (let b = 0; b < numHBands; b++) {
-            const off = (glyphLocX + b) * 4;
-            bandRow[off] = hBands[b].length;
-            bandRow[off + 1] = listOffset;
-            bandRow[off + 2] = 0;
-            bandRow[off + 3] = 0;
-
-            // Write curve list
-            for (let j = 0; j < hBands[b].length; j++) {
-                const ci = hBands[b][j];
-                const loc = curveLocs[ci];
-                const loff = (glyphLocX + listOffset + j) * 4;
-                bandRow[loff] = loc.x;
-                bandRow[loff + 1] = loc.y;
-                bandRow[loff + 2] = 0;
-                bandRow[loff + 3] = 0;
-            }
+            this.bandData.push(hBands[b].length, listOffset, 0, 0);
             listOffset += hBands[b].length;
         }
-
-        // Write vertical band headers
+        // Write all vertical band headers
         for (let b = 0; b < numVBands; b++) {
-            const off = (glyphLocX + numHBands + b) * 4;
-            bandRow[off] = vBands[b].length;
-            bandRow[off + 1] = listOffset;
-            bandRow[off + 2] = 0;
-            bandRow[off + 3] = 0;
-
-            for (let j = 0; j < vBands[b].length; j++) {
-                const ci = vBands[b][j];
-                const loc = curveLocs[ci];
-                const loff = (glyphLocX + listOffset + j) * 4;
-                bandRow[loff] = loc.x;
-                bandRow[loff + 1] = loc.y;
-                bandRow[loff + 2] = 0;
-                bandRow[loff + 3] = 0;
-            }
+            this.bandData.push(vBands[b].length, listOffset, 0, 0);
             listOffset += vBands[b].length;
         }
 
-        this.bandTexRow++;
+        // Write curve list entries (horizontal bands, then vertical bands).
+        // Each entry stores a single flat index into curveBuffer.
+        for (let b = 0; b < numHBands; b++) {
+            for (const ci of hBands[b]) {
+                this.bandData.push(curveLocs[ci], 0, 0, 0);
+            }
+        }
+        for (let b = 0; b < numVBands; b++) {
+            for (const ci of vBands[b]) {
+                this.bandData.push(curveLocs[ci], 0, 0, 0);
+            }
+        }
+
+        this.bandEntryCount += listOffset;
 
         // Compute band transform (guard against zero-size bbox)
         const dx = Math.max(xMax - xMin, 0.001);
@@ -444,7 +407,7 @@ class SlugDataBuilder {
 
         const meta = {
             curves,
-            glyphLocX, glyphLocY,
+            glyphBandOffset,
             bandMaxX: numVBands - 1,
             bandMaxY: numHBands - 1,
             bandTransform: [bandScaleX, bandScaleY, bandOffsetX, bandOffsetY],
@@ -456,42 +419,12 @@ class SlugDataBuilder {
         return meta;
     }
 
-    _ensureCurveRow(y) {
-        while (this.curveTexData.length <= y) {
-            this.curveTexData.push(new Float32Array(BAND_TEX_WIDTH * 4));
-        }
+    getCurveBufferData() {
+        return new Float32Array(this.curveData);
     }
 
-    _ensureBandRow(y) {
-        while (this.bandTexData.length <= y) {
-            this.bandTexData.push(new Uint32Array(BAND_TEX_WIDTH * 4));
-        }
-    }
-
-    getCurveTexHeight() {
-        return Math.max(1, this.curveTexData.length);
-    }
-
-    getBandTexHeight() {
-        return Math.max(1, this.bandTexData.length);
-    }
-
-    getCurveTexArray() {
-        const h = this.getCurveTexHeight();
-        const data = new Float32Array(BAND_TEX_WIDTH * 4 * h);
-        for (let y = 0; y < this.curveTexData.length; y++) {
-            data.set(this.curveTexData[y], y * BAND_TEX_WIDTH * 4);
-        }
-        return data;
-    }
-
-    getBandTexArray() {
-        const h = this.getBandTexHeight();
-        const data = new Uint32Array(BAND_TEX_WIDTH * 4 * h);
-        for (let y = 0; y < this.bandTexData.length; y++) {
-            data.set(this.bandTexData[y], y * BAND_TEX_WIDTH * 4);
-        }
-        return data;
+    getBandBufferData() {
+        return new Uint32Array(this.bandData);
     }
 }
 
@@ -597,9 +530,9 @@ function layoutAndBuildVertices(text, font, slugBuilder, useDilation) {
             vView.setFloat32(off + 28, jacY, true);
             vView.setFloat32(off + 32, jacZ, true);
             vView.setFloat32(off + 36, jacW, true);
-            // glyph_xy (sint32x2) offset 40
-            vView.setInt32(off + 40, meta.glyphLocX, true);
-            vView.setInt32(off + 44, meta.glyphLocY, true);
+            // glyph_xy (sint32x2) offset 40: .x = flat band buffer offset, .y = unused
+            vView.setInt32(off + 40, meta.glyphBandOffset, true);
+            vView.setInt32(off + 44, 0, true);
             // band_max_flags (sint32x2) offset 48
             vView.setInt32(off + 48, meta.bandMaxX, true);
             vView.setInt32(off + 52, meta.bandMaxY, true);
@@ -642,8 +575,8 @@ class SlugRenderer {
         this.uniformBuffer = null;
         this.vertexBuffer = null;
         this.indexBuffer = null;
-        this.curveTexture = null;
-        this.bandTexture = null;
+        this.curveBuffer = null;
+        this.bandBuffer = null;
         this.bindGroup = null;
         this.indexCount = 0;
         this.canvasFormat = null;
@@ -681,8 +614,8 @@ class SlugRenderer {
         this.bindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float', viewDimension: '2d' } },
-                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint', viewDimension: '2d' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
             ]
         });
 
@@ -736,20 +669,18 @@ class SlugRenderer {
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
-        // Create placeholder 1x1 textures
-        this._createPlaceholderTextures();
+        // Create placeholder storage buffers
+        this._createPlaceholderBuffers();
     }
 
-    _createPlaceholderTextures() {
-        this.curveTexture = this.device.createTexture({
-            size: [1, 1],
-            format: 'rgba32float',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    _createPlaceholderBuffers() {
+        this.curveBuffer = this.device.createBuffer({
+            size: 16, // minimum: one vec4<f32>
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
-        this.bandTexture = this.device.createTexture({
-            size: [1, 1],
-            format: 'rgba32uint',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        this.bandBuffer = this.device.createBuffer({
+            size: 16, // minimum: one vec4<u32>
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
         this._updateBindGroup();
     }
@@ -759,47 +690,35 @@ class SlugRenderer {
             layout: this.bindGroupLayout,
             entries: [
                 { binding: 0, resource: { buffer: this.uniformBuffer } },
-                { binding: 1, resource: this.curveTexture.createView() },
-                { binding: 2, resource: this.bandTexture.createView() },
+                { binding: 1, resource: { buffer: this.curveBuffer } },
+                { binding: 2, resource: { buffer: this.bandBuffer } },
             ]
         });
     }
 
     uploadSlugData(slugBuilder) {
-        const curveH = slugBuilder.getCurveTexHeight();
-        const bandH = slugBuilder.getBandTexHeight();
+        if (this.curveBuffer) this.curveBuffer.destroy();
+        if (this.bandBuffer) this.bandBuffer.destroy();
 
-        // Destroy old textures
-        if (this.curveTexture) this.curveTexture.destroy();
-        if (this.bandTexture) this.bandTexture.destroy();
+        const curveData = slugBuilder.getCurveBufferData();
+        const bandData = slugBuilder.getBandBufferData();
 
-        // Create curve texture
-        this.curveTexture = this.device.createTexture({
-            size: [BAND_TEX_WIDTH, curveH],
-            format: 'rgba32float',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        // Storage buffers need at least 16 bytes
+        this.curveBuffer = this.device.createBuffer({
+            size: Math.max(curveData.byteLength, 16),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
-        const curveData = slugBuilder.getCurveTexArray();
-        this.device.queue.writeTexture(
-            { texture: this.curveTexture },
-            curveData,
-            { bytesPerRow: BAND_TEX_WIDTH * 16 },
-            { width: BAND_TEX_WIDTH, height: curveH }
-        );
+        if (curveData.byteLength > 0) {
+            this.device.queue.writeBuffer(this.curveBuffer, 0, curveData);
+        }
 
-        // Create band texture
-        this.bandTexture = this.device.createTexture({
-            size: [BAND_TEX_WIDTH, bandH],
-            format: 'rgba32uint',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        this.bandBuffer = this.device.createBuffer({
+            size: Math.max(bandData.byteLength, 16),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
-        const bandData = slugBuilder.getBandTexArray();
-        this.device.queue.writeTexture(
-            { texture: this.bandTexture },
-            bandData,
-            { bytesPerRow: BAND_TEX_WIDTH * 16 },
-            { width: BAND_TEX_WIDTH, height: bandH }
-        );
+        if (bandData.byteLength > 0) {
+            this.device.queue.writeBuffer(this.bandBuffer, 0, bandData);
+        }
 
         this._updateBindGroup();
     }
@@ -970,8 +889,8 @@ async function main() {
             }
 
             const numGlyphs = indexCount / 6;
-            const numCurves = slugBuilder.curveTexX / 2;
-            setStatus(`${numGlyphs} glyphs, ${numCurves} curves, tex: ${slugBuilder.getCurveTexHeight()}x${slugBuilder.getBandTexHeight()} rows`);
+            const numCurves = slugBuilder.curveEntryCount / 2;
+            setStatus(`${numGlyphs} glyphs, ${numCurves} curves`);
         } catch (e) {
             console.error('Text update error:', e);
             setStatus(`Error: ${e.message}`);
