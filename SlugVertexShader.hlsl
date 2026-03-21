@@ -1,6 +1,6 @@
 // ===================================================
 // Reference vertex shader for the Slug algorithm.
-// This code is made available under the MIT License.
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright 2017, by Eric Lengyel.
 // ===================================================
 

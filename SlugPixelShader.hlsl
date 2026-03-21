@@ -74,7 +74,11 @@ float2 SolveVertPoly(float4 p12, float2 p3)
 	float t1 = (b.x - d) * ra;
 	float t2 = (b.x + d) * ra;
 
+	// If the polynomial is nearly linear, then solve -2b t + c = 0.
+
 	if (abs(a.x) < 1.0 / 65536.0) t1 = t2 = p12.x * rb;
+
+	// Return the y coordinates where C(t) = 0.
 
 	return (float2((a.y * t1 - b.y * 2.0) * t1 + p12.y, (a.y * t2 - b.y * 2.0) * t2 + p12.y));
 }
@@ -228,6 +232,11 @@ float SlugRender(Texture2D curveData, Texture2D<uint4> bandData, float2 renderCo
 		int2 curveLoc = int2(TexelLoad2D(bandData, int2(vbandLoc.x + curveIndex, vbandLoc.y)).xy);
 		float4 p12 = TexelLoad2D(curveData, curveLoc) - float4(renderCoord, renderCoord);
 		float2 p3 = TexelLoad2D(curveData, int2(curveLoc.x + 1, curveLoc.y)).xy - renderCoord;
+
+		// If the largest y coordinate among all three control points falls
+		// below the current pixel, then there are no more curves in the
+		// vertical band that can influence the result, so exit the loop.
+		// (The curves are sorted in descending order by max y coordinate.)
 
 		if (max(max(p12.y, p12.w), p3.y) * pixelsPerEm.y < -0.5) break;
 
